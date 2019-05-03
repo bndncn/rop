@@ -16,6 +16,7 @@ class Gadget:
 def get_gadgets(binaries):
     seen_instructions = set() # Avoid duplicated instructions
     mnemonic_to_gadget = {}
+    address_to_gadget = {}
 
     for binary in binaries:
         print('Processing file: ' + binary)
@@ -38,17 +39,17 @@ def get_gadgets(binaries):
                             if i.mnemonic not in mnemonic_to_gadget:
                                 mnemonic_to_gadget[i.mnemonic] = []
 
-                            mnemonic_to_gadget[i.mnemonic].append(gadget)              
+                            mnemonic_to_gadget[i.mnemonic].append(gadget)
+
+                            address_to_gadget[start_addr] = gadget              
                     
                         start_addr = i.address + 1
                     instructions = b''
     
-    return mnemonic_to_gadget
+    return mnemonic_to_gadget, address_to_gadget # Return 2 dictionaries
 
-gadgets = get_gadgets(sys.argv[1:])
+mnemonic_to_gadget, address_to_gadget = get_gadgets(sys.argv[1:])
 
-for k, v in gadgets.items():
-    print('-' * 50)
-    print(k + ':')
-    for gadget in v:
-        print(gadget)
+for k, v in address_to_gadget.items():
+    print(str(hex(k)), end=' ')
+    print(v)
