@@ -23,17 +23,18 @@ def get_gadgets(binaries):
         with open(binary, 'rb') as f:
             instructions = b''
             start_addr = 0x0
-            end_addr = 0x0
+            end_addr = -1
             while True:
                 curr_byte = f.read(1)
                 if not curr_byte:
                     break
-                instructions += curr_byte
+
                 end_addr += 1
-                if curr_byte == b'\xc3':  
+
+                if curr_byte == b'\xc3': 
                     for i in md.disasm(instructions, start_addr):
                         if (i.mnemonic + ' ' + i.op_str) not in seen_instructions:
-                            gadget = Gadget(i.mnemonic, i.op_str, start_addr, end_addr)
+                            gadget = Gadget(i.mnemonic, i.op_str, i.address, end_addr)
                             seen_instructions.add(i.mnemonic + ' ' + i.op_str)
                             
                             if i.mnemonic not in mnemonic_to_gadget:
@@ -41,10 +42,21 @@ def get_gadgets(binaries):
 
                             mnemonic_to_gadget[i.mnemonic].append(gadget)
 
-                            address_to_gadget[start_addr] = gadget              
+                            address_to_gadget[i.address] = gadget              
                     
-                        start_addr = i.address + 1
+                    # Add the ret instruction at the end
+                    gadget = Gadget('ret', '', end_addr, end_addr)
+                    
+                    if 'ret' not in mnemonic_to_gadget:
+                        mnemonic_to_gadget['ret'] = []
+                    
+                    mnemonic_to_gadget['ret'].append(gadget)
+                    address_to_gadget[end_addr] = gadget
+                    
                     instructions = b''
+                    start_addr = end_addr + 1
+                else:
+                    instructions += curr_byte
     
     return mnemonic_to_gadget, address_to_gadget # Return 2 dictionaries
 
