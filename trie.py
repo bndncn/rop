@@ -1,8 +1,11 @@
 from capstone import *
 from elftools.elf.elffile import ELFFile
+from unicorn import *
+from unicorn.x86_const import *
 
 import collections
 import sys
+import struct
 
 md = Cs(CS_ARCH_X86, CS_MODE_32)
 
@@ -20,11 +23,12 @@ md = Cs(CS_ARCH_X86, CS_MODE_32)
 
 
 class Gadget:
-    def __init__(self, mnemonic, op_str, start_addr, end_addr):
+    def __init__(self, mnemonic, op_str, start_addr, end_addr, code):
         self.mnemonic = mnemonic
         self.op_str = op_str
         self.start_addr = start_addr
         self.end_addr = end_addr
+        self.code = code
 
     def __str__(self):
         return '0x%x -> 0x%x: %s %s' % (self.start_addr, self.end_addr, self.mnemonic, self.op_str)
@@ -100,7 +104,7 @@ def build_from(parent_insn, code, pos, parent_instr_addr):
                 break
 
             gadget = Gadget(instruction.mnemonic, instruction.op_str,
-                            instruction.address, parent_instr_addr)
+                            instruction.address, parent_instr_addr, code[start_index: pos])
 
             gadget_node = insert(parent_insn, gadget)
             # recurse building gadgets from this node backwards, similar to how building gadgets from ret works
@@ -108,7 +112,7 @@ def build_from(parent_insn, code, pos, parent_instr_addr):
 
 
 def test_trie():
-    ret_gadget = Gadget('ret', '', -1, -1)
+    ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
     root = TrieNode(ret_gadget, None)
 
     # code = b'\x55\x48\x8b\x05\xb8\x13\xc3\x90\x92\x27\xa3'
@@ -120,10 +124,10 @@ def test_trie():
     populate_trie(root, code, 0)
     print_trie(root, [], 0)
 
-
 def get_gadgets(binaries):
-    ret_gadget = Gadget('ret', '', -1, -1)
+    ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
     root = TrieNode(ret_gadget, None)
+    print(root)
 
     for binary in binaries:
         print('Processing file: ' + binary)
@@ -137,9 +141,44 @@ def get_gadgets(binaries):
             #     print(f'0x{i.address:x}:\t{i.mnemonic}\t{i.op_str}')
             populate_trie(root, code, text_section_start_addr)
 
-    print_trie(root, [], 0)
+    #print_trie(root, [], 0)
+    return root
 
+# Need to set: 
+# eax = 0x7B (123)
+# ebx = Address of Memory to change (Must align to page boundary)
+# ecx = Length of memory to change
+# edx = 0x07
+registers = set(['eax', 'ebx', 'ecx', 'edx'])
+ADDRESS = 0x1000000
 
-# get_gadgets(sys.argv[1:])
+# Do a BFS on root to find useful gadgets
+def search_gadgets(root):
+    queue = collections.deque() 
+    queue.append(root)
 
-test_trie()
+    useful_gadgets = []
+
+    mu = Uc(UC_ARCH_X86, UC_MODE_32)
+    mu.mem_map(ADDRESS, 2 * 1024 * 1024)
+    mu.reg_write(UC_X86_REG_ECX, 0x0)
+
+    while queue:
+        node = queue.popleft()
+
+        # Process node
+        if (node.gadget.mnemonic == 'inc' and node.gadget.op_str in registers):
+            mu.mem_write(ADDRESS, node.gadget.code)
+
+            mu.emu_start(ADDRESS, ADDRESS + len(node.gadget.code))
+
+            
+            r_ebx = mu.reg_read(UC_X86_REG_EBX)
+            print(">>> EBX = 0x%x" %r_ebx)
+
+        # Add the current node's children into the queue
+        for mnemonic in node.children:
+            for child in node.children[mnemonic]:
+                queue.append(child)
+
+search_gadgets(get_gadgets(sys.argv[1:]))
