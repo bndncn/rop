@@ -25,6 +25,7 @@ class TrieNode:
 def insert(root, gadget):
     gadget_node = TrieNode(gadget)
 
+    # if existing array of gadgets that share mnemonic then append
     if gadget.mnemonic in root.children:
         print(f'gadget: {gadget.mnemonic} already in trie')
         root.children[gadget.mnemonic].append(gadget_node)
@@ -46,33 +47,41 @@ def insert(root, gadget):
 #             ensure insn is in the trie as a child of parent_insn
 #             if insn isn’t boring then:
 #                 callBuildFrom(pos−step, insn)
+
 bad_instructions = ['call', 'jmp', 'ret']
 
 
 def populate_trie(root, code, text_section_start_addr):
     for pos in range(len(code)):
+        # only way to extract single byte as bytestring, indexing just gives integer value
         curr_byte = bytes([code[pos]])
         if curr_byte == b'\xc3':
             build_from(root, code, pos, text_section_start_addr + pos)
 
 
 def build_from(parent_insn, code, pos, parent_instr_addr):
+    # max instr len or however many bytes are left in file
     max_len = min(pos + 1, 10)
     for step in range(1, max_len):
+        # where to start slice of bytes from
         start_index = pos - step
 
         disas_instruction = md.disasm(
             code[start_index: pos], parent_instr_addr - step, 1)
 
         for instruction in disas_instruction:  # to make it yield, only 1 element
+            # only take instructions that use all the bytes
             if(instruction.size != pos - start_index):
                 break
+            # avoid things like call jmp
             if(instruction.mnemonic in bad_instructions):
                 break
 
             gadget = Gadget(instruction.mnemonic, instruction.op_str,
                             instruction.address, parent_instr_addr)
+
             gadget_node = insert(parent_insn, gadget)
+            # recurse building gadgets from this node, similar to how building gadgets from ret works
             build_from(gadget_node, code, start_index, instruction.address)
 
 
