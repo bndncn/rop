@@ -43,12 +43,12 @@ def insert(root, gadget):
 
     # if existing array of gadgets that share mnemonic then append
     if gadget.mnemonic in root.children:
-        print(
-            f'gadget: {gadget.mnemonic} already in trie of {root.gadget.mnemonic}')
+        # print(
+        #     f'gadget: {gadget.mnemonic} already in trie of {root.gadget.mnemonic}')
         root.children[gadget.mnemonic].append(gadget_node)
     else:
-        print(
-            f'gadget: {gadget.mnemonic} inserted into trie of {root.gadget.mnemonic}')
+        # print(
+        #     f'gadget: {gadget.mnemonic} inserted into trie of {root.gadget.mnemonic}')
         root.children[gadget.mnemonic] = [gadget_node]
     return gadget_node
 
@@ -70,7 +70,7 @@ def print_trie(root, gadgets, depth):
 
 # def find(root, mnemonic, op_str):
 
-bad_instructions = ['jg', 'call', 'jmp', 'ret']
+bad_instructions = set(['jg', 'jmp', 'ret'])
 
 
 def populate_trie(root, code, text_section_start_addr):
@@ -82,7 +82,7 @@ def populate_trie(root, code, text_section_start_addr):
 
 
 def build_from(parent_insn, code, pos, parent_instr_addr):
-    # max instr len or however many bytes are left in file
+    # max instr len (9) or however many bytes are left in file
     max_len = min(pos + 1, 10)
     for step in range(1, max_len):
         # where to start slice of bytes from
@@ -108,22 +108,22 @@ def build_from(parent_insn, code, pos, parent_instr_addr):
 
 
 def test_trie():
-    ret_gadget = Gadget('ret', '', 0, 4)
+    ret_gadget = Gadget('ret', '', -1, -1)
     root = TrieNode(ret_gadget, None)
 
     # code = b'\x55\x48\x8b\x05\xb8\x13\xc3\x90\x92\x27\xa3'
     # code = b"\x04\x04\x02\x02\xc3"
     # code = b"\x04\x04\x02\x02\xc3"
-    code = b"\x04\x04\x02\x02\xC3\x87\x12\xAA\xC3"
+    # code = b"\x04\x04\x02\x02\xC3\x87\x12\xAA\xC3"
+    # code = b"\x31\xC0\xC3\x40\xC3\xCD\x80\x58\x83\xC3\x15\xC3\x5B\x59\xC3\x5A\xB8\x0B\x00\x00\x00\xC3"
+    code = b"\x53\x83\xEC\x08\xE8\xD3\xFC\xFF\xFF\x81\xC3\xB3\x2B\x00\x00\x83\xC4\x08\x5B\xC3"
     populate_trie(root, code, 0)
     print_trie(root, [], 0)
 
 
 def get_gadgets(binaries):
-    root = TrieNode('ret', None)
-
-    mnemonic_to_gadget = {}
-    address_to_gadget = {}
+    ret_gadget = Gadget('ret', '', -1, -1)
+    root = TrieNode(ret_gadget, None)
 
     for binary in binaries:
         print('Processing file: ' + binary)
@@ -137,52 +137,9 @@ def get_gadgets(binaries):
             #     print(f'0x{i.address:x}:\t{i.mnemonic}\t{i.op_str}')
             populate_trie(root, code, text_section_start_addr)
 
-    #         instructions = b''
-    #         start_addr = text_section_start_addr
-    #         end_addr = start_addr - 1
-    #         for curr_byte in code:
-    #             # only way to extract single byte as a b'' string
-    #             curr_byte = bytes([curr_byte])
-    #             end_addr += 1
-
-    #             if curr_byte == b'\xc3':
-    #                 disas_instructions = md.disasm(instructions, start_addr)
-    #                 for i in disas_instructions:
-    #                     # if (i.mnemonic == 'call'):
-
-    #                     if (i.mnemonic + ' ' + i.op_str) not in seen_instructions:
-    #                         gadget = Gadget(i.mnemonic, i.op_str,
-    #                                         i.address, end_addr)
-    #                         seen_instructions.add(i.mnemonic + ' ' + i.op_str)
-
-    #                         if i.mnemonic not in mnemonic_to_gadget:
-    #                             mnemonic_to_gadget[i.mnemonic] = []
-
-    #                         mnemonic_to_gadget[i.mnemonic].append(gadget)
-
-    #                         address_to_gadget[i.address] = gadget
-
-    #                 # Add the ret instruction at the end
-    #                 gadget = Gadget('ret', '', end_addr, end_addr)
-
-    #                 if 'ret' not in mnemonic_to_gadget:
-    #                     mnemonic_to_gadget['ret'] = []
-
-    #                 mnemonic_to_gadget['ret'].append(gadget)
-    #                 address_to_gadget[end_addr] = gadget
-
-    #                 instructions = b''
-    #                 start_addr = end_addr + 1
-    #             else:
-    #                 instructions += curr_byte
-
-    # return mnemonic_to_gadget, address_to_gadget  # Return 2 dictionaries
+    print_trie(root, [], 0)
 
 
-# mnemonic_to_gadget, address_to_gadget = get_gadgets(sys.argv[1:])
 # get_gadgets(sys.argv[1:])
 
-# for k, v in address_to_gadget.items():
-#     print(str(hex(k)), end=' ')
-#     print(v)
 test_trie()
