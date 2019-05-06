@@ -100,48 +100,47 @@ def get_gadgets(binaries):
             # for i in md.disasm(code, text_section_start_addr):
             #     print(f'0x{i.address:x}:\t{i.mnemonic}\t{i.op_str}')
             populate_trie(root, code, text_section_start_addr)
-            pass
 
-            instructions = b''
-            start_addr = text_section_start_addr
-            end_addr = start_addr - 1
-            for curr_byte in code:
-                # only way to extract single byte as a b'' string
-                curr_byte = bytes([curr_byte])
-                end_addr += 1
+    #         instructions = b''
+    #         start_addr = text_section_start_addr
+    #         end_addr = start_addr - 1
+    #         for curr_byte in code:
+    #             # only way to extract single byte as a b'' string
+    #             curr_byte = bytes([curr_byte])
+    #             end_addr += 1
 
-                if curr_byte == b'\xc3':
-                    disas_instructions = md.disasm(instructions, start_addr)
-                    for i in disas_instructions:
-                        # if (i.mnemonic == 'call'):
+    #             if curr_byte == b'\xc3':
+    #                 disas_instructions = md.disasm(instructions, start_addr)
+    #                 for i in disas_instructions:
+    #                     # if (i.mnemonic == 'call'):
 
-                        if (i.mnemonic + ' ' + i.op_str) not in seen_instructions:
-                            gadget = Gadget(i.mnemonic, i.op_str,
-                                            i.address, end_addr)
-                            seen_instructions.add(i.mnemonic + ' ' + i.op_str)
+    #                     if (i.mnemonic + ' ' + i.op_str) not in seen_instructions:
+    #                         gadget = Gadget(i.mnemonic, i.op_str,
+    #                                         i.address, end_addr)
+    #                         seen_instructions.add(i.mnemonic + ' ' + i.op_str)
 
-                            if i.mnemonic not in mnemonic_to_gadget:
-                                mnemonic_to_gadget[i.mnemonic] = []
+    #                         if i.mnemonic not in mnemonic_to_gadget:
+    #                             mnemonic_to_gadget[i.mnemonic] = []
 
-                            mnemonic_to_gadget[i.mnemonic].append(gadget)
+    #                         mnemonic_to_gadget[i.mnemonic].append(gadget)
 
-                            address_to_gadget[i.address] = gadget
+    #                         address_to_gadget[i.address] = gadget
 
-                    # Add the ret instruction at the end
-                    gadget = Gadget('ret', '', end_addr, end_addr)
+    #                 # Add the ret instruction at the end
+    #                 gadget = Gadget('ret', '', end_addr, end_addr)
 
-                    if 'ret' not in mnemonic_to_gadget:
-                        mnemonic_to_gadget['ret'] = []
+    #                 if 'ret' not in mnemonic_to_gadget:
+    #                     mnemonic_to_gadget['ret'] = []
 
-                    mnemonic_to_gadget['ret'].append(gadget)
-                    address_to_gadget[end_addr] = gadget
+    #                 mnemonic_to_gadget['ret'].append(gadget)
+    #                 address_to_gadget[end_addr] = gadget
 
-                    instructions = b''
-                    start_addr = end_addr + 1
-                else:
-                    instructions += curr_byte
+    #                 instructions = b''
+    #                 start_addr = end_addr + 1
+    #             else:
+    #                 instructions += curr_byte
 
-    return mnemonic_to_gadget, address_to_gadget  # Return 2 dictionaries
+    # return mnemonic_to_gadget, address_to_gadget  # Return 2 dictionaries
 
 
 # mnemonic_to_gadget, address_to_gadget = get_gadgets(sys.argv[1:])
