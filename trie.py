@@ -28,7 +28,9 @@ class Gadget:
 
     def __str__(self):
         return '0x%x -> 0x%x: %s %s' % (self.start_addr, self.end_addr, self.mnemonic, self.op_str)
-        # return 'start 0x%x:\tend 0x%x:\t%s\t%s' % (self.start_addr, self.end_addr, self.mnemonic, self.op_str)
+
+    def quiet_str(self):
+        return f'{self.mnemonic}, {self.op_str}'
 
 
 class TrieNode:
@@ -56,16 +58,16 @@ def insert(root, gadget):
 def print_trie(root, gadgets, depth):
     if(len(root.children.items()) == 0):
         # print backwards to show actual code sequence
-        print()
+        print(f'\n{gadgets[-1].start_addr:#0{10}x}', end=' : ')
         for i in range(1, len(gadgets) + 1):
-            print(gadgets[-i].__str__(), end=' ; ')
-        print('ret\n')
-        return
-    for k, v in root.children.items():
-        for node in v:
-            gadgets.insert(depth, node.gadget)
-            print_trie(node, gadgets, depth + 1)
-            gadgets.pop(depth)
+            print(gadgets[-i].quiet_str(), end=' ; ')
+        print('ret')
+    else:
+        for k, v in root.children.items():
+            for node in v:
+                gadgets.insert(depth, node.gadget)
+                print_trie(node, gadgets, depth + 1)
+                gadgets.pop(depth)
 
 
 # def find(root, mnemonic, op_str):
@@ -140,6 +142,7 @@ def get_gadgets(binaries):
     print_trie(root, [], 0)
 
 
-# get_gadgets(sys.argv[1:])
-
-test_trie()
+if (len(sys.argv) > 1):
+    get_gadgets(sys.argv[1:])
+else:
+    test_trie()
