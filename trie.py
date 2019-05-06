@@ -1,6 +1,8 @@
 from capstone import *
-import sys
 from elftools.elf.elffile import ELFFile
+
+import collections
+import sys
 
 md = Cs(CS_ARCH_X86, CS_MODE_32)
 
@@ -17,13 +19,14 @@ class Gadget:
 
 
 class TrieNode:
-    def __init__(self, gadget):
+    def __init__(self, gadget, parent):
         self.gadget = gadget
         self.children = {}
+        self.parent = parent
 
 
 def insert(root, gadget):
-    gadget_node = TrieNode(gadget)
+    gadget_node = TrieNode(gadget, root)
 
     # if existing array of gadgets that share mnemonic then append
     if gadget.mnemonic in root.children:
@@ -48,7 +51,7 @@ def insert(root, gadget):
 #             if insn isn’t boring then:
 #                 callBuildFrom(pos−step, insn)
 
-bad_instructions = ['call', 'jmp', 'ret']
+bad_instructions = ['jg', 'call', 'jmp', 'ret']
 
 
 def populate_trie(root, code, text_section_start_addr):
@@ -86,14 +89,14 @@ def build_from(parent_insn, code, pos, parent_instr_addr):
 
 
 def test_trie():
-    root = TrieNode('ret')
+    root = TrieNode('ret', None)
     # code = b'\x55\x48\x8b\x05\xb8\x13\xc3\x90\x92\x27\xa3'
     code = b"\x04\x04\x02\x02\xc3"
     populate_trie(root, code, 1238)
 
 
 def get_gadgets(binaries):
-    root = TrieNode('ret')
+    root = TrieNode('ret', None)
 
     mnemonic_to_gadget = {}
     address_to_gadget = {}
