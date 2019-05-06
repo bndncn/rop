@@ -23,21 +23,22 @@ class TrieNode:
 
 
 def insert(root, gadget):
+    gadget_node = TrieNode(gadget)
+
     if gadget.mnemonic in root.children:
         print(f'gadget: {gadget.mnemonic} already in trie')
-        return None
+        root.children[gadget.mnemonic].append(gadget_node)
     else:
         print(f'gadget: {gadget.mnemonic} inserted into trie')
-        gadget_node = TrieNode(gadget)
-        root.children[gadget.mnemonic] = gadget_node
-        return gadget_node
-
+        root.children[gadget.mnemonic] = [gadget_node]
+    return gadget_node
 
 # create a node, root, representing the ret instruction
 # place root in the trie
 # for pos from 1 to textseglen do:
 #     if the byte at pos is c3 then:
 #         callBuildFrom(pos, root)
+
 
 # BuildFrom(indexpos, instruction parentinsn):
 #     for step from 1 to max insnlen do:
@@ -56,14 +57,15 @@ def populate_trie(root, code, text_section_start_addr):
 
 
 def build_from(parent_insn, code, pos, parent_instr_addr):
-    for step in range(1, 10):
-        instr_len = pos - step
+    max_len = min(pos + 1, 10)
+    for step in range(1, max_len):
+        start_index = pos - step
 
         disas_instruction = md.disasm(
-            code[instr_len: pos], parent_instr_addr - step, 1)
+            code[start_index: pos], parent_instr_addr - step, 1)
 
         for instruction in disas_instruction:  # to make it yield, only 1 element
-            if(instruction.size != instr_len):
+            if(instruction.size != pos - start_index):
                 break
             if(instruction.mnemonic in bad_instructions):
                 break
@@ -71,9 +73,7 @@ def build_from(parent_insn, code, pos, parent_instr_addr):
             gadget = Gadget(instruction.mnemonic, instruction.op_str,
                             instruction.address, parent_instr_addr)
             gadget_node = insert(parent_insn, gadget)
-            if(gadget_node):
-                build_from(gadget_node, code, pos,
-                           parent_instr_addr - instr_len)
+            build_from(gadget_node, code, start_index, instruction.address)
 
 
 def test_trie():
