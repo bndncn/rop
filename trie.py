@@ -71,8 +71,10 @@ def print_trie(root, gadgets, depth):
 
 
 # def find(root, mnemonic, op_str):
-
-bad_instructions = set(['jg', 'jmp', 'ret'])
+bad_instructions = set(['ret', 'call', 'jg', 'jmp', 'jmp', 'je', 'jne',
+                        'jg', 'jge', 'ja', 'jae', 'jl', 'jle', 'jb', 'jbe',
+                        'jo', 'jno', 'jz', 'jnz', 'js', 'jns', 'loop', 'loopcc'
+                        ])
 
 
 def populate_trie(root, code, text_section_start_addr):
