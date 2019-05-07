@@ -131,7 +131,6 @@ def test_trie():
 def get_gadgets(binaries):
     ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
     root = TrieNode(ret_gadget, None)
-    print(root)
 
     for binary in binaries:
         print('Processing file: ' + binary)
@@ -153,8 +152,25 @@ def get_gadgets(binaries):
 # ebx = Address of Memory to change (Must align to page boundary)
 # ecx = Length of memory to change
 # edx = 0x07
-registers = set(['eax', 'ebx', 'ecx', 'edx'])
-ADDRESS = 0x1000000
+registers = set(['ax', 'bx', 'cx', 'dx'])
+EIP_ADDRESS = 0x400000
+STACK_ADDRESS = 0x0
+
+# Regexes for useful instructions. Examples are given as comments
+useful_instructions = ['inc e\S+', # inc eax 
+                       'dec e\S+', # dec eax
+                       'add e\S+, e\S+', # add eax, ebx
+                       'add e\S+, (0[xX])?[\dA-Fa-f]+', # add eax, 0x12341234
+                       'sub e\S+, e\S+', # sub eax, ebx
+                       'sub e\S+, (0[xX])?[\dA-Fa-f]+', # sub eax, 0x12341234 
+                       'shr e\S+, \d+', # shr eax, 1
+                       'shl e\S+, \d+', # shl eax, 1
+                       'mov e\S+, (0[xX])?[\dA-Fa-f]+', # mov eax, 0x12341234
+                       'mov e\S+, e\S+', # mov eax, ebx
+                       'mov e\S+, \d+', # mov eax, 0
+                       'xor e\S+, e\S+', # xor eax, eax
+                       'pop e\S+', # pop ebx
+                       'xchg e\S+, e\S+' # xchg eax, ebx]
 
 # Do a BFS on root to find useful gadgets
 def search_gadgets(root):
@@ -164,21 +180,32 @@ def search_gadgets(root):
     useful_gadgets = []
 
     mu = Uc(UC_ARCH_X86, UC_MODE_32)
-    mu.mem_map(ADDRESS, 2 * 1024 * 1024)
-    mu.reg_write(UC_X86_REG_ECX, 0x0)
+    mu.mem_map(EIP_ADDRESS, 2 * 1024 * 1024)
+    mu.mem_map(STACK_ADDRESS, 1024 * 1024)
+    
+    #mu.reg_write(UC_X86_REG_EBX, 0x0)
+    #mu.reg_write(UC_X86_REG_RSP, STACK_ADDRESS + 1024 * 1024 - 1)
 
     while queue:
         node = queue.popleft()
 
         # Process node
-        if (node.gadget.mnemonic == 'inc' and node.gadget.op_str in registers):
-            mu.mem_write(ADDRESS, node.gadget.code)
+        if (node.gadget.mnemonic == 'div'):
+            #mu.mem_write(EIP_ADDRESS, node.gadget.code)
+            #mu.mem_write(STACK_ADDRESS, b'\x12\x32\x44\x45')
+            
+            curr_node = node
+            while curr_node is not None:
+                print(curr_node.gadget.mnemonic + ' ' + curr_node.gadget.op_str)
+                curr_node = curr_node.parent
+            
+            print('-------------------------------------------')
 
-            mu.emu_start(ADDRESS, ADDRESS + len(node.gadget.code))
+            #mu.emu_start(EIP_ADDRESS, EIP_ADDRESS + len(node.gadget.code))
 
             
-            r_ebx = mu.reg_read(UC_X86_REG_EBX)
-            print(">>> EBX = 0x%x" %r_ebx)
+            #r_ebx = mu.reg_read(UC_X86_REG_EBX)
+            #print(">>> EBX = 0x%x" %r_ebx)
 
         # Add the current node's children into the queue
         for mnemonic in node.children:
@@ -187,6 +214,6 @@ def search_gadgets(root):
 
 #search_gadgets(get_gadgets(sys.argv[1:]))
 if (len(sys.argv) > 1):
-    get_gadgets(sys.argv[1:])
+    search_gadgets(get_gadgets(sys.argv[1:]))
 else:
     test_trie()
