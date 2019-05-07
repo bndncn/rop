@@ -34,7 +34,7 @@ class Gadget:
         return '0x%x -> 0x%x: %s %s' % (self.start_addr, self.end_addr, self.mnemonic, self.op_str)
 
     def quiet_str(self):
-        return f'{self.mnemonic}, {self.op_str}'
+        return f'{self.mnemonic} {self.op_str}'
 
 
 class TrieNode:
@@ -74,8 +74,7 @@ def print_trie(root, gadgets, depth):
                 gadgets.pop(depth)
 
 
-# def find(root, mnemonic, op_str):
-bad_instructions = set(['ret', 'call', 'jg', 'jmp', 'jmp', 'je', 'jne',
+bad_instructions = set(['ret', 'call', 'jg', 'jmp', 'ljmp', 'je', 'jne',
                         'jg', 'jge', 'ja', 'jae', 'jl', 'jle', 'jb', 'jbe',
                         'jo', 'jno', 'jz', 'jnz', 'js', 'jns', 'loop', 'loopcc'
                         ])
@@ -128,10 +127,10 @@ def test_trie():
     populate_trie(root, code, 0)
     print_trie(root, [], 0)
 
+
 def get_gadgets(binaries):
     ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
     root = TrieNode(ret_gadget, None)
-    print(root)
 
     for binary in binaries:
         print('Processing file: ' + binary)
@@ -145,10 +144,9 @@ def get_gadgets(binaries):
             #     print(f'0x{i.address:x}:\t{i.mnemonic}\t{i.op_str}')
             populate_trie(root, code, text_section_start_addr)
 
-    #print_trie(root, [], 0)
     return root
 
-# Need to set: 
+# Need to set:
 # eax = 0x7B (123)
 # ebx = Address of Memory to change (Must align to page boundary)
 # ecx = Length of memory to change
@@ -158,7 +156,7 @@ ADDRESS = 0x1000000
 
 # Do a BFS on root to find useful gadgets
 def search_gadgets(root):
-    queue = collections.deque() 
+    queue = collections.deque()
     queue.append(root)
 
     useful_gadgets = []
@@ -176,17 +174,18 @@ def search_gadgets(root):
 
             mu.emu_start(ADDRESS, ADDRESS + len(node.gadget.code))
 
-            
             r_ebx = mu.reg_read(UC_X86_REG_EBX)
-            print(">>> EBX = 0x%x" %r_ebx)
+            print(">>> EBX = 0x%x" % r_ebx)
 
         # Add the current node's children into the queue
         for mnemonic in node.children:
             for child in node.children[mnemonic]:
                 queue.append(child)
 
-#search_gadgets(get_gadgets(sys.argv[1:]))
+
+# search_gadgets(get_gadgets(sys.argv[1:]))
 if (len(sys.argv) > 1):
-    get_gadgets(sys.argv[1:])
+    root = get_gadgets(sys.argv[1:])
+    print_trie(root, [], 0)
 else:
     test_trie()
