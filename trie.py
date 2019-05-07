@@ -4,6 +4,7 @@ from unicorn import *
 from unicorn.x86_const import *
 
 import collections
+import re
 import sys
 import struct
 
@@ -147,7 +148,7 @@ def get_gadgets(binaries):
     return root
 
 # Need to set:
-# eax = 0x7B (123)
+# eax = 0x7D (125)
 # ebx = Address of Memory to change (Must align to page boundary)
 # ecx = Length of memory to change
 # edx = 0x07
@@ -171,12 +172,17 @@ useful_instructions = ['inc (e\S+)', # inc eax
                        'pop (e\S+)', # pop ebx
                        'xchg (e\S+), (e\S+)'] # xchg eax, ebx
 
+def regs_done(curr_state):
+    return registers
+
 # Do a BFS on root to find useful gadgets
 def create_payload(root, registers_state, base_addr):
     queue = collections.deque()
     queue.append(root)
 
     payload = ''
+    temp = '' # In case the remaining gadgets are bad
+    curr_state = {'eax': 0x7B, 'ebx': 0xbffdf000, 'ecx': 0x00021000, 'edx': 0x7} # In case the remaining gadgets are bad
 
     mu = Uc(UC_ARCH_X86, UC_MODE_32)
     mu.mem_map(EIP_ADDRESS, 2 * 1024 * 1024)
@@ -186,47 +192,72 @@ def create_payload(root, registers_state, base_addr):
     #mu.reg_write(UC_X86_REG_RSP, STACK_ADDRESS + 1024 * 1024 - 1)
 
     while queue:
-        if registers == [True, True, True, True]:
+        if registers == registers_state:
             return payload
 
         node = queue.popleft()
 
         gadget_addr = node.gadget.start_addr
 
-        # Process node
-        if node.gadget.mnemonic == 'pop':
-            temp = '' # In case the pop gadget has bad gadgets, we don't want to add it to actual payload     
+        instruction = node.gadget.mnemonic + ' ' + node.gadget.op_str
 
-            if node.gadget.op_str in registers:
-                temp += struct.pack("<I", gadget_addr)
-                temp += struct.pack("<I", registers[node.gadget.op_str])
-            else:
-                # Else if skip the gadget and move onto its parent
-                pass
+        bad = False
+
+        print(node.gadget.mnemonic)
+        try:
+            # Process node
+            if node.gadget.mnemonic == 'pop':
+                temp += struct.pack("<I", gadget_addr)  
+                print(temp)
+                # Pop one of eax, ebx, ecx, or edx
+                if node.gadget.op_str in registers:
+                    print(temp)
+                    temp += struct.pack("<I", registers[node.gadget.op_str])
+                    curr_state[node.gadget.op_str] = registers[node.gadget.op_str]
+                else:
+                    temp += struct.pack("<I", 0x12341234) # Add random junk for useless pop
             
-        # Add the current node's children into the queue
-        for mnemonic in node.children:
-            for child in node.children[mnemonic]:
-                queue.append(child)
+            elif node.gadget.mnemonic == 'xor' and re.search('xor (e\S+), (e\S+)', instruction):
+                reg1, reg2 = re.search('xor (e\S+), (e\S+)', instruction).groups()
+                
+                # Zero out one of eax, ebx, ecx, or edx
+                if reg1 == reg2 and reg1 in registers:
+                    pass
+                else:
+                    pass
+                
+            # Add the current node's children into the queue
+            for mnemonic in node.children:
+                for child in node.children[mnemonic]:
+                    queue.append(child)
+            
+            # Process all of the parent nodes before the lower levels    
+            if node.parent is not None and not bad:
+                queue.appendleft(node.parent)
+                continue
+            else:
+                # We've reached ret or hit a bad instruction
+                payload += temp
+                registers_state = curr_state
+                temp = ''
         
-        # Process all of the parent nodes before the lower levels    
-        if node.parent is not None:
-            queue.appendleft(node.parent)
-            continue
+        except UcError as e:
+            # For invalid memory operations
+            temp = ''
+            curr_state = registers_state 
         
-        print('-------------------------------------------')
-
             #mu.emu_start(EIP_ADDRESS, EIP_ADDRESS + len(node.gadget.code))
 
             
             #r_ebx = mu.reg_read(UC_X86_REG_EBX)
             #print(">>> EBX = 0x%x" %r_ebx)
+        
+        return payload
 
 
 if (len(sys.argv) > 1):
-    # Corresponds to state of eax, ebx, ecx, edx, respectively, True means done and False means not done
-    registers_state = [False, False, False, False] 
-    print(create_payload(get_gadgets(sys.argv[1:]), registers, 0x0))
+    registers_state = {'eax': 0x11112222, 'ebx': 0x11112222, 'ecx': 0x11112222, 'edx': 0x11112222}
+    print(create_payload(get_gadgets(sys.argv[1:]), registers_state, 0x0))
     #root = get_gadgets(sys.argv[1:])
     #print_trie(root, [], 0)
 else:
