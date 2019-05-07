@@ -151,32 +151,32 @@ def get_gadgets(binaries):
 # ebx = Address of Memory to change (Must align to page boundary)
 # ecx = Length of memory to change
 # edx = 0x07
-registers = set(['ax', 'bx', 'cx', 'dx'])
+registers = {'eax': 0x7B, 'ebx': 0xbffdf000, 'ecx': 0x00021000, 'edx': 0x7}
 EIP_ADDRESS = 0x400000
 STACK_ADDRESS = 0x0
 
 # Regexes for useful instructions. Examples are given as comments
-useful_instructions = ['inc e\S+', # inc eax 
-                       'dec e\S+', # dec eax
-                       'add e\S+, e\S+', # add eax, ebx
-                       'add e\S+, (0[xX])?[\dA-Fa-f]+', # add eax, 0x12341234
-                       'sub e\S+, e\S+', # sub eax, ebx
-                       'sub e\S+, (0[xX])?[\dA-Fa-f]+', # sub eax, 0x12341234 
-                       'shr e\S+, \d+', # shr eax, 1
-                       'shl e\S+, \d+', # shl eax, 1
-                       'mov e\S+, (0[xX])?[\dA-Fa-f]+', # mov eax, 0x12341234
-                       'mov e\S+, e\S+', # mov eax, ebx
-                       'mov e\S+, \d+', # mov eax, 0
-                       'xor e\S+, e\S+', # xor eax, eax
-                       'pop e\S+', # pop ebx
-                       'xchg e\S+, e\S+' # xchg eax, ebx]
+useful_instructions = ['inc (e\S+)', # inc eax 
+                       'dec (e\S+)', # dec eax
+                       'add (e\S+), (e\S+)', # add eax, ebx
+                       'add (e\S+), (0[xX][\dA-Fa-f]+)', # add eax, 0x12341234
+                       'sub (e\S+), (e\S+)', # sub eax, ebx
+                       'sub (e\S+), (0[xX][\dA-Fa-f]+)', # sub eax, 0x12341234 
+                       'shr (e\S+), (\d+)', # shr eax, 1
+                       'shl (e\S+), (\d+)', # shl eax, 1
+                       'mov (e\S+), (0[xX][\dA-Fa-f]+)', # mov eax, 0x12341234
+                       'mov (e\S+), (e\S+)', # mov eax, ebx
+                       'mov (e\S+), (\d+)', # mov eax, 0
+                       'xor (e\S+), (e\S+)', # xor eax, eax
+                       'pop (e\S+)', # pop ebx
+                       'xchg (e\S+), (e\S+)'] # xchg eax, ebx
 
 # Do a BFS on root to find useful gadgets
-def search_gadgets(root):
+def create_payload(root, registers_state, base_addr):
     queue = collections.deque()
     queue.append(root)
 
-    useful_gadgets = []
+    payload = ''
 
     mu = Uc(UC_ARCH_X86, UC_MODE_32)
     mu.mem_map(EIP_ADDRESS, 2 * 1024 * 1024)
@@ -186,19 +186,35 @@ def search_gadgets(root):
     #mu.reg_write(UC_X86_REG_RSP, STACK_ADDRESS + 1024 * 1024 - 1)
 
     while queue:
+        if registers == [True, True, True, True]:
+            return payload
+
         node = queue.popleft()
 
+        gadget_addr = node.gadget.start_addr
+
         # Process node
-        if (node.gadget.mnemonic == 'div'):
-            #mu.mem_write(EIP_ADDRESS, node.gadget.code)
-            #mu.mem_write(STACK_ADDRESS, b'\x12\x32\x44\x45')
+        if node.gadget.mnemonic == 'pop':
+            temp = '' # In case the pop gadget has bad gadgets, we don't want to add it to actual payload     
+
+            if node.gadget.op_str in registers:
+                temp += struct.pack("<I", gadget_addr)
+                temp += struct.pack("<I", registers[node.gadget.op_str])
+            else:
+                # Else if skip the gadget and move onto its parent
+                pass
             
-            curr_node = node
-            while curr_node is not None:
-                print(curr_node.gadget.mnemonic + ' ' + curr_node.gadget.op_str)
-                curr_node = curr_node.parent
-            
-            print('-------------------------------------------')
+        # Add the current node's children into the queue
+        for mnemonic in node.children:
+            for child in node.children[mnemonic]:
+                queue.append(child)
+        
+        # Process all of the parent nodes before the lower levels    
+        if node.parent is not None:
+            queue.appendleft(node.parent)
+            continue
+        
+        print('-------------------------------------------')
 
             #mu.emu_start(EIP_ADDRESS, EIP_ADDRESS + len(node.gadget.code))
 
@@ -206,15 +222,12 @@ def search_gadgets(root):
             #r_ebx = mu.reg_read(UC_X86_REG_EBX)
             #print(">>> EBX = 0x%x" %r_ebx)
 
-        # Add the current node's children into the queue
-        for mnemonic in node.children:
-            for child in node.children[mnemonic]:
-                queue.append(child)
 
-
-# search_gadgets(get_gadgets(sys.argv[1:]))
 if (len(sys.argv) > 1):
-    root = get_gadgets(sys.argv[1:])
-    print_trie(root, [], 0)
+    # Corresponds to state of eax, ebx, ecx, edx, respectively, True means done and False means not done
+    registers_state = [False, False, False, False] 
+    print(create_payload(get_gadgets(sys.argv[1:]), registers, 0x0))
+    #root = get_gadgets(sys.argv[1:])
+    #print_trie(root, [], 0)
 else:
     test_trie()
