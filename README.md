@@ -12,7 +12,7 @@ To use rop.py, please run 'python3 rop.py' with at least the --binary option, wi
 
 rop.py may also be run with --gadgets option, which will print out the gadgets found along with their offset in memory. To create a payload with precalculated addresses that will be plug and play, use the --offset option with a hex value so the base address need not be added to each gadget offset manually. 
 
-This payload's goal is to bypass NX stacks by using the mprotect() function to set the stack as executable, allowing stack-resident shellcode to be directly jumped into as if compiled with -z execstack option.
+This payload's goal is to bypass NX stacks by using the mprotect() syscall to set the stack as executable, allowing stack-resident shellcode to be directly jumped into as if compiled with -z execstack option.
 
 It aims to set up:
 eax with 0x7d, the syscall # for mprotect()
