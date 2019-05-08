@@ -60,8 +60,10 @@ def insert(root, gadget, depth):
         root.children[gadget.mnemonic] = [gadget_node]
     return gadget_node
 
+def print_trie(root):
+    print_trie_helper(root, [], 0)
 
-def print_trie(root, gadgets, depth):
+def print_trie_helper(root, gadgets, depth):
     if(len(root.children.items()) == 0):
         # print backwards to show actual code sequence
         print(f'\n{gadgets[-1].start_addr:#0{10}x}', end=' : ')
@@ -72,7 +74,7 @@ def print_trie(root, gadgets, depth):
         for k, v in root.children.items():
             for node in v:
                 gadgets.insert(depth, node.gadget)
-                print_trie(node, gadgets, depth + 1)
+                print_trie_helper(node, gadgets, depth + 1)
                 gadgets.pop(depth)
 
 
@@ -126,7 +128,7 @@ def test_trie():
     # code = b"\x31\xC0\xC3\x40\xC3\xCD\x80\x58\x83\xC3\x15\xC3\x5B\x59\xC3\x5A\xB8\x0B\x00\x00\x00\xC3"
     code = b"\x53\x83\xEC\x08\xE8\xD3\xFC\xFF\xFF\x81\xC3\xB3\x2B\x00\x00\x83\xC4\x08\x5B\xC3"
     populate_trie(root, code, 0)
-    print_trie(root, [], 0)
+    print_trie(root)
 
 def get_gadgets(binaries, offset):
     ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
@@ -282,6 +284,7 @@ def main():
     parser = argparse.ArgumentParser(description='Creates a ROP payload to execute mprotect()')
     parser.add_argument('--binary', nargs='+', type=str, required=True, help='Binary files to look for gadgets' )
     parser.add_argument('--offset', nargs='*', type=str, help='Offset for gadget addresses')
+    parser.add_argument('--gadgets', action='store_true', help='Print gadgets')
     args = parser.parse_args()
     
     binaries = args.binary
@@ -289,7 +292,11 @@ def main():
     if args.offset is not None:
         offset = int(args.offset.pop(), 16)
 
-    print(create_payload(get_gadgets(binaries, offset)))
+    root = get_gadgets(binaries, offset)
+    if args.gadgets:
+        print_trie(root)
+    else:
+        print(create_payload(root))
 
 if __name__ == '__main__':
     main()   
